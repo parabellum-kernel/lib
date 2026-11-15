@@ -15,5 +15,8 @@
         "ebml",
         "riff",
         "tika",
+        "comicinfo",
+        "komga",
+        "mangadex",
     },
 }
