@@ -2,7 +2,7 @@
     .name = .parabellum_libs,
     .version = "1.0.0",
     .minimum_zig_version = "0.17.1",
-    .fingerprint = 0x8fb00f70b5d73a8d,
+    .fingerprint = 0xb32f539063f7f1c4,
     .dependencies = .{},
     .paths = .{
         "build.zig",
