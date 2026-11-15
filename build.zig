@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sql_mod = b.addModule("flowdata_sql", .{
+    const sql_mod = b.addModule("parabellum_sql", .{
         .root_source_file = b.path("sql/src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -17,13 +17,13 @@ pub fn build(b: *std.Build) void {
     });
     sqlite_c.linkSystemLibrary("sqlite3", .{});
 
-    const sqlite_mod = b.addModule("flowdata_sqlite", .{
+    const sqlite_mod = b.addModule("parabellum_sqlite", .{
         .root_source_file = b.path("sqlite/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    sqlite_mod.addImport("flowdata_sql", sql_mod);
+    sqlite_mod.addImport("parabellum_sql", sql_mod);
     sqlite_mod.addImport("sqlite_c", sqlite_c.createModule());
     sqlite_mod.linkSystemLibrary("sqlite3", .{});
 
@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const zip_mod = b.addModule("flowdata_zip_archive", .{
+    const zip_mod = b.addModule("parabellum_zip_archive", .{
         .root_source_file = b.path("zip_archive/mod.zig"),
         .target = target,
         .optimize = optimize,
@@ -88,7 +88,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const test_step = b.step("test", "Run all flowdata-libs unit tests");
+    const test_step = b.step("test", "Run all parabellum-libs unit tests");
     const mods = [_]*std.Build.Module{
         sql_mod,
         sqlite_mod,

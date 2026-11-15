@@ -1,5 +1,5 @@
 /// Pure, engine-agnostic SQL AST (`SelectQuery`, `InsertQuery`, `UpdateQuery`, `DeleteQuery`, `Expr`).
-/// Zero dependencies on Flowdata or any specific database driver (ARCH-009D).
+/// Zero dependencies on Parabellum or any specific database driver (ARCH-009D).
 
 pub const SqlValue = union(enum) {
     null_val,

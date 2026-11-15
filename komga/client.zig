@@ -20,7 +20,7 @@ const PageDto = types.PageDto;
 pub const ClientConfig = struct {
     base_url: []const u8 = "http://localhost:25600",
     auth: KomgaAuth = .none,
-    user_agent: []const u8 = "flowdata-komga-sdk/0.1.0",
+    user_agent: []const u8 = "parabellum-komga-sdk/0.1.0",
 };
 
 pub const KomgaClientError = error{

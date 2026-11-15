@@ -1,5 +1,5 @@
 const std = @import("std");
-const sql = @import("flowdata_sql");
+const sql = @import("parabellum_sql");
 const db_mod = @import("db.zig");
 const stmt_cache = @import("stmt_cache.zig");
 
@@ -8,7 +8,7 @@ const Stmt = db_mod.Stmt;
 const Value = db_mod.Value;
 const StmtCache = stmt_cache.StmtCache;
 
-/// SQLite-specific `sql.Dialect` configuration supplied to `flowdata_sql`.
+/// SQLite-specific `sql.Dialect` configuration supplied to `parabellum_sql`.
 pub const sqlite_dialect: sql.Dialect = .{
     .ident_quote = '"',
     .placeholder = .{ .indexed = "?" },

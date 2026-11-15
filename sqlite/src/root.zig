@@ -1,7 +1,7 @@
 pub const db = @import("db.zig");
 pub const ddl = @import("ddl.zig");
 pub const stmt_cache = @import("stmt_cache.zig");
-pub const sql = @import("flowdata_sql");
+pub const sql = @import("parabellum_sql");
 pub const sql_adapter = @import("sql_adapter.zig");
 
 pub const c = db.c;

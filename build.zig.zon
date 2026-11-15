@@ -1,5 +1,5 @@
 .{
-    .name = .flowdata_libs,
+    .name = .parabellum_libs,
     .version = "1.0.0",
     .minimum_zig_version = "0.17.1",
     .fingerprint = 0x8fb00f70b5d73a8d,
