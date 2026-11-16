@@ -87,6 +87,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const vfs_mod = b.addModule("vfs", .{
+        .root_source_file = b.path("vfs/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const test_step = b.step("test", "Run all parabellum-libs unit tests");
     const mods = [_]*std.Build.Module{
@@ -106,5 +111,17 @@ pub fn build(b: *std.Build) void {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
+
+    const vfs_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("vfs/tests/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "vfs", .module = vfs_mod },
+            },
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(vfs_tests).step);
 }
 
