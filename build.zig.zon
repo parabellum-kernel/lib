@@ -18,5 +18,8 @@
         "comicinfo",
         "komga",
         "mangadex",
+        "vfs",
+        "gdrive",
+        "gdrive-vfs",
     },
 }
