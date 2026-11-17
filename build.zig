@@ -92,20 +92,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const gdrive_mod = b.addModule("gdrive", .{
-        .root_source_file = b.path("../lib-gdrive/src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    gdrive_mod.addImport("parabellum_vfs", gdrive_mod);
-
-    const gdrive_vfs_mod = b.addModule("gdrive-vfs", .{
-        .root_source_file = b.path("../lib-gdrive-vfs/src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    gdrive_vfs_mod.addImport("parabellum_vfs", vfs_mod);
-    gdrive_vfs_mod.addImport("parabellum_gdrive", gdrive_mod);
 
     const test_step = b.step("test", "Run all parabellum-libs unit tests");
     const mods = [_]*std.Build.Module{
@@ -120,8 +106,7 @@ pub fn build(b: *std.Build) void {
         mangadex_sdk_mod,
         komga_sdk_mod,
         comicinfo_mod,
-        gdrive_mod,
-        gdrive_vfs_mod,
+        vfs_mod,
     };
     for (mods) |m| {
         const t = b.addTest(.{ .root_module = m });
