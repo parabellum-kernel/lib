@@ -4,3 +4,4 @@
 [submodule "gdrive"]
 	path = gdrive
 	url = ../lib-gdrive
+	branch = main
