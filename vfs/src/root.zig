@@ -16,4 +16,6 @@ pub const SyncCoordinator = @import("SyncCoordinator.zig");
 pub const Provisioner = @import("Provisioner.zig");
 pub const VfsSession = @import("VfsSession.zig");
 pub const Vault = @import("Vault.zig");
+pub const RepoCatalogAdapter = @import("RepoCatalogAdapter.zig").RepoCatalogAdapter;
+pub const RepoBlobStoreAdapter = @import("RepoBlobStoreAdapter.zig").RepoBlobStoreAdapter;
 
