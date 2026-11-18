@@ -1,6 +1,0 @@
-[submodule "gdrive_vfs"]
-	path = gdrive_vfs
-	url = ../lib-gdrive-vfs
-[submodule "gdrive"]
-	path = gdrive
-	url = ../lib-gdrive
