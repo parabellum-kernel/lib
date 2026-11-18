@@ -72,16 +72,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const mangadex_sdk_mod = b.addModule("mangadex_sdk", .{
-        .root_source_file = b.path("mangadex/mod.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const komga_sdk_mod = b.addModule("komga_sdk", .{
-        .root_source_file = b.path("komga/mod.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
     const comicinfo_mod = b.addModule("comicinfo", .{
         .root_source_file = b.path("comicinfo/mod.zig"),
         .target = target,
@@ -108,8 +98,6 @@ pub fn build(b: *std.Build) void {
         ebml_mod,
         riff_mod,
         tika_mod,
-        mangadex_sdk_mod,
-        komga_sdk_mod,
         comicinfo_mod,
         vfs_mod,
         yaml_mod,
