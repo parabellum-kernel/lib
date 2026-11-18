@@ -19,5 +19,6 @@
         "komga",
         "mangadex",
         "vfs",
+        "yaml",
     },
 }
