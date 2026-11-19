@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const EnvPair = struct {
     key: []const u8,
@@ -44,11 +45,19 @@ pub const ChildProcessRunner = struct {
     }
 
     fn runChild(_: ?*anyopaque, alloc: std.mem.Allocator, opts: RunOptions) !ProcessResult {
-        var threaded: std.Io.Threaded = .init(alloc, .{ .environ = .empty });
+        const proc_env: std.process.Environ = if (builtin.os.tag == .windows)
+            .{ .block = .global }
+        else
+            .{ .block = .{ .slice = @ptrCast(std.mem.span(std.c.environ)) } };
+
+        var threaded: std.Io.Threaded = .init(alloc, .{ .environ = proc_env });
         defer threaded.deinit();
         const io = threaded.io();
 
-        var env_map: std.process.Environ.Map = .init(alloc);
+        var env_map: std.process.Environ.Map = if (opts.env_overrides.len > 0)
+            try proc_env.createMap(alloc)
+        else
+            .init(alloc);
         defer env_map.deinit();
         for (opts.env_overrides) |kv| {
             try env_map.put(kv.key, kv.value);
