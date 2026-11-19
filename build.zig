@@ -87,6 +87,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const platform_mod = b.addModule("parabellum_platform", .{
+        .root_source_file = b.path("platform/src/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
 
     const test_step = b.step("test", "Run all parabellum-libs unit tests");
     const mods = [_]*std.Build.Module{
@@ -101,6 +107,7 @@ pub fn build(b: *std.Build) void {
         comicinfo_mod,
         vfs_mod,
         yaml_mod,
+        platform_mod,
     };
     for (mods) |m| {
         const t = b.addTest(.{ .root_module = m });
