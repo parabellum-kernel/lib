@@ -20,5 +20,6 @@
         "mangadex",
         "vfs",
         "yaml",
+        "platform",
     },
 }
