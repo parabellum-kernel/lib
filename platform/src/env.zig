@@ -70,6 +70,26 @@ fn cGetEnv(alloc: std.mem.Allocator, key: []const u8) ?[]u8 {
 const comptime_triple: []const u8 = @tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ "-" ++ @tagName(builtin.abi);
 
 const posix_unsafe_roots = [_][]const u8{ "/", "/tmp", "/usr", "/var", "/etc", "/bin", "/sbin", "/lib" };
+const macos_unsafe_roots = [_][]const u8{
+    "/",
+    "/tmp",
+    "/usr",
+    "/var",
+    "/etc",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/System",
+    "/Library",
+    "/Applications",
+    "/Users",
+    "/Volumes",
+    "/private",
+    "/private/tmp",
+    "/private/var",
+    "/private/etc",
+    "/opt/homebrew",
+};
 const windows_unsafe_roots = [_][]const u8{ "C:\\", "C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)" };
 
 // --- Linux Implementation ---
@@ -121,6 +141,9 @@ const linux_vtable = PlatformEnv.VTable{
 fn macosSharedExt(_: ?*anyopaque) []const u8 {
     return ".dylib";
 }
+fn macosUnsafe(_: ?*anyopaque) []const []const u8 {
+    return &macos_unsafe_roots;
+}
 
 const macos_vtable = PlatformEnv.VTable{
     .get_env = linuxGetEnv,
@@ -132,7 +155,7 @@ const macos_vtable = PlatformEnv.VTable{
     .static_lib_prefix = posixStaticPrefix,
     .static_lib_ext = posixStaticExt,
     .native_target_triple = nativeTriple,
-    .unsafe_roots = posixUnsafe,
+    .unsafe_roots = macosUnsafe,
 };
 
 // --- Windows Implementation ---
