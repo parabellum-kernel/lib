@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const ast = @import("ast.zig");
 pub const decode = @import("decode.zig");
+pub const env = @import("env.zig");
 
 pub const Node = ast.Node;
 pub const Scalar = ast.Scalar;
@@ -18,4 +19,8 @@ pub const ParseOptions = decode.ParseOptions;
 pub const DecodeError = decode.DecodeError;
 pub const parse = decode.parse;
 pub const parseFromNode = decode.parseFromNode;
+
+pub const EnvError = env.EnvError;
+pub const SchemeResolverFn = env.SchemeResolverFn;
+pub const EnvInterpolator = env.EnvInterpolator;
 
