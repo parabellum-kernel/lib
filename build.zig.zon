@@ -21,5 +21,8 @@
         "vfs",
         "yaml",
         "platform",
+        "crypto",
+        "otp",
+        "mfa",
     },
 }

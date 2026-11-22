@@ -254,11 +254,15 @@ pub const VfsMeta = struct {
     last_observed_api_revision: []const u8 = "20261029",
 };
 
+pub const SlotRole = enum(u8) { owner = 0, editor = 1, viewer = 2 };
+
 pub const VaultKeySlot = struct {
     slot_id: []const u8,
     label: []const u8,
     kem_alg: []const u8 = "MLKEM768-X25519",
     aead_alg: []const u8 = "XChaCha20-Poly1305",
+    cipher_suite_id: u16 = 1,
+    role: SlotRole = .owner,
     public_key: []const u8,
     kem_ciphertext: []const u8,
     vmk_wrapped: []const u8,

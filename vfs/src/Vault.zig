@@ -333,3 +333,54 @@ pub fn readAt(self: *Vault, inode_id: []const u8, offset: u64, out: []u8) !usize
     );
 }
 
+pub fn addMember(
+    self: *Vault,
+    slot_id: []const u8,
+    label: []const u8,
+    role: CatalogPort.SlotRole,
+    member_pk: Crypto.HybridKem.PublicKey,
+    now_unix_s: i64,
+) !void {
+    try Provisioner.addMember(
+        self.allocator,
+        self.io,
+        self.catalog,
+        self.vault_id,
+        self.vmk,
+        slot_id,
+        label,
+        role,
+        member_pk,
+        now_unix_s,
+    );
+}
+
+pub fn revokeMember(
+    self: *Vault,
+    revoked_slot_id: []const u8,
+    remaining_slot_ids: []const []const u8,
+) !void {
+    const new_vmk = try Provisioner.revokeMemberAndRotateVmk(
+        self.allocator,
+        self.io,
+        self.catalog,
+        self.vault_id,
+        self.vmk,
+        revoked_slot_id,
+        remaining_slot_ids,
+    );
+    self.vmk = new_vmk;
+}
+
+pub fn signAuthorship(kp: Crypto.Ed25519.KeyPair, payload: []const u8) !Crypto.Ed25519.Signature {
+    return Crypto.Ed25519.sign(kp, payload);
+}
+
+pub fn verifyAuthorship(pk: Crypto.Ed25519.PublicKey, payload: []const u8, sig: Crypto.Ed25519.Signature) bool {
+    return Crypto.Ed25519.verify(pk, payload, sig);
+}
+
+pub fn obfuscateName(self: *const Vault, name: []const u8) [32]u8 {
+    return Crypto.obfuscateMetadata(self.vmk, self.vault_id, name);
+}
+

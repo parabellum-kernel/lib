@@ -1,15 +1,32 @@
 const std = @import("std");
+const crypto = @import("parabellum_crypto");
 
 pub const PAGE_SIZE_BYTES: usize = 256 * 1024;
-pub const KEY_LEN: usize = 32;
-pub const TAG_LEN: usize = 16;
-pub const XCHACHA_NONCE_LEN: usize = 24;
+pub const KEY_LEN: usize = crypto.KEY_LEN;
+pub const TAG_LEN: usize = crypto.TAG_LEN;
+pub const XCHACHA_NONCE_LEN: usize = crypto.XCHACHA_NONCE_LEN;
 pub const WRAPPED_VMK_LEN: usize = KEY_LEN + TAG_LEN;
-pub const WRAPPED_KEY_WITH_NONCE_LEN: usize = XCHACHA_NONCE_LEN + KEY_LEN + TAG_LEN;
+pub const WRAPPED_KEY_WITH_NONCE_LEN: usize = crypto.WRAPPED_KEY_WITH_NONCE_LEN;
 
-pub const HybridKem = std.crypto.kem.hybrid.MlKem768X25519;
-pub const XChaCha20Poly1305 = std.crypto.aead.chacha_poly.XChaCha20Poly1305;
-pub const HkdfSha256 = std.crypto.kdf.hkdf.HkdfSha256;
+pub const HybridKem = crypto.MlKem768X25519;
+pub const XChaCha20Poly1305 = crypto.XChaCha20Poly1305;
+pub const HkdfSha256 = crypto.HkdfSha256;
+pub const CipherSuiteId = crypto.CipherSuiteId;
+pub const Ed25519 = crypto.Ed25519;
+
+/// Builds domain-separated AAD `vault_id || "||" || slot_id` for VMK key slots.
+pub fn slotAad(allocator: std.mem.Allocator, vault_id: []const u8, slot_id: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}||{s}", .{ vault_id, slot_id });
+}
+
+/// Computes `HMAC-SHA256(VMK, vault_id || "\x00" || label)` for metadata obfuscation.
+pub fn obfuscateMetadata(vmk: [KEY_LEN]u8, vault_id: []const u8, label: []const u8) [32]u8 {
+    var hmac = crypto.HmacSha256.init(&vmk);
+    hmac.update(vault_id);
+    hmac.update(&.{0});
+    hmac.update(label);
+    return hmac.final();
+}
 
 pub const KeyHierarchyTier = enum {
     device_kem_mlkem768_x25519,
@@ -31,6 +48,9 @@ pub fn wrapVmkForDevice(
     slot_id_aad: []const u8,
 ) !WrappedVmkSlot {
     const enc = try device_pk.encaps(io);
+    var ss = crypto.SecretBytes(KEY_LEN).init(enc.shared_secret);
+    defer ss.deinit();
+
     const zero_nonce: [XCHACHA_NONCE_LEN]u8 = @splat(0);
 
     var wrapped: [WRAPPED_VMK_LEN]u8 = undefined;
@@ -41,7 +61,7 @@ pub fn wrapVmkForDevice(
         &vmk,
         slot_id_aad,
         zero_nonce,
-        enc.shared_secret,
+        ss.bytes().*,
     );
     @memcpy(wrapped[KEY_LEN..], &tag);
 
@@ -57,7 +77,9 @@ pub fn unwrapVmkForDevice(
     slot: WrappedVmkSlot,
     slot_id_aad: []const u8,
 ) ![KEY_LEN]u8 {
-    const kek = try device_sk.decaps(&slot.kem_ciphertext);
+    var kek = crypto.SecretBytes(KEY_LEN).init(try device_sk.decaps(&slot.kem_ciphertext));
+    defer kek.deinit();
+
     const zero_nonce: [XCHACHA_NONCE_LEN]u8 = @splat(0);
 
     var vmk: [KEY_LEN]u8 = undefined;
@@ -68,7 +90,7 @@ pub fn unwrapVmkForDevice(
         tag,
         slot_id_aad,
         zero_nonce,
-        kek,
+        kek.bytes().*,
     );
     return vmk;
 }
@@ -80,22 +102,7 @@ pub fn wrapKeyWithNonce(
     key_to_wrap: [KEY_LEN]u8,
     aad: []const u8,
 ) [WRAPPED_KEY_WITH_NONCE_LEN]u8 {
-    var out: [WRAPPED_KEY_WITH_NONCE_LEN]u8 = undefined;
-    var nonce: [XCHACHA_NONCE_LEN]u8 = undefined;
-    io.random(&nonce);
-    @memcpy(out[0..XCHACHA_NONCE_LEN], &nonce);
-
-    var tag: [TAG_LEN]u8 = undefined;
-    XChaCha20Poly1305.encrypt(
-        out[XCHACHA_NONCE_LEN..][0..KEY_LEN],
-        &tag,
-        &key_to_wrap,
-        aad,
-        nonce,
-        kek,
-    );
-    @memcpy(out[XCHACHA_NONCE_LEN + KEY_LEN ..][0..TAG_LEN], &tag);
-    return out;
+    return crypto.wrapKeyWithNonce(io, kek, key_to_wrap, aad);
 }
 
 /// Unwraps a 32-byte key produced by `wrapKeyWithNonce`.
@@ -104,13 +111,7 @@ pub fn unwrapKeyWithNonce(
     wrapped: [WRAPPED_KEY_WITH_NONCE_LEN]u8,
     aad: []const u8,
 ) ![KEY_LEN]u8 {
-    const nonce = wrapped[0..XCHACHA_NONCE_LEN].*;
-    const ciphertext = wrapped[XCHACHA_NONCE_LEN..][0..KEY_LEN];
-    const tag = wrapped[XCHACHA_NONCE_LEN + KEY_LEN ..][0..TAG_LEN].*;
-
-    var out: [KEY_LEN]u8 = undefined;
-    try XChaCha20Poly1305.decrypt(&out, ciphertext, tag, aad, nonce, kek);
-    return out;
+    return crypto.unwrapKeyWithNonce(kek, wrapped, aad);
 }
 
 /// Encrypts an arbitrary-length blob (e.g. `vfs_catalog.db` or `credentials_wrapped`)
@@ -122,24 +123,7 @@ pub fn encryptBlobWithNonce(
     plaintext: []const u8,
     aad: []const u8,
 ) ![]u8 {
-    const out = try allocator.alloc(u8, XCHACHA_NONCE_LEN + plaintext.len + TAG_LEN);
-    errdefer allocator.free(out);
-
-    var nonce: [XCHACHA_NONCE_LEN]u8 = undefined;
-    io.random(&nonce);
-    @memcpy(out[0..XCHACHA_NONCE_LEN], &nonce);
-
-    var tag: [TAG_LEN]u8 = undefined;
-    XChaCha20Poly1305.encrypt(
-        out[XCHACHA_NONCE_LEN..][0..plaintext.len],
-        &tag,
-        plaintext,
-        aad,
-        nonce,
-        key,
-    );
-    @memcpy(out[XCHACHA_NONCE_LEN + plaintext.len ..][0..TAG_LEN], &tag);
-    return out;
+    return crypto.encryptBlobWithNonce(allocator, io, key, plaintext, aad);
 }
 
 /// Decrypts a blob produced by `encryptBlobWithNonce`.
@@ -149,30 +133,15 @@ pub fn decryptBlobWithNonce(
     sealed: []const u8,
     aad: []const u8,
 ) ![]u8 {
-    if (sealed.len < XCHACHA_NONCE_LEN + TAG_LEN) return error.InvalidSealedBlob;
-
-    const plaintext_len = sealed.len - XCHACHA_NONCE_LEN - TAG_LEN;
-    const nonce = sealed[0..XCHACHA_NONCE_LEN].*;
-    const ciphertext = sealed[XCHACHA_NONCE_LEN..][0..plaintext_len];
-    const tag = sealed[XCHACHA_NONCE_LEN + plaintext_len ..][0..TAG_LEN].*;
-
-    const out = try allocator.alloc(u8, plaintext_len);
-    errdefer allocator.free(out);
-
-    try XChaCha20Poly1305.decrypt(out, ciphertext, tag, aad, nonce, key);
-    return out;
+    return crypto.decryptBlobWithNonce(allocator, key, sealed, aad);
 }
 
 /// Derives a per-part encryption key via `HKDF-SHA256(ikm = file_dek, salt = inode_ulid, info = "gdrive_vfs_part_v1" || le_u32(part_index))`.
 pub fn derivePartKey(file_dek: [KEY_LEN]u8, inode_ulid: [16]u8, part_index: u32) [KEY_LEN]u8 {
-    const prk = HkdfSha256.extract(&inode_ulid, &file_dek);
     var info: ["gdrive_vfs_part_v1".len + 4]u8 = undefined;
     @memcpy(info[0.."gdrive_vfs_part_v1".len], "gdrive_vfs_part_v1");
     std.mem.writeInt(u32, info["gdrive_vfs_part_v1".len..][0..4], part_index, .little);
-
-    var out: [KEY_LEN]u8 = undefined;
-    HkdfSha256.expand(&out, &info, prk);
-    return out;
+    return HkdfSha256.deriveKey(KEY_LEN, &inode_ulid, &file_dek, &info);
 }
 
 pub const GDRVPART_MAGIC: [8]u8 = .{ 'G', 'D', 'R', 'V', 'P', 'A', 'R', 'T' };

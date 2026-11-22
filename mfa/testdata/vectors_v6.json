@@ -1,0 +1,221 @@
+[
+  {
+    "name": "single_leaf",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 1,
+    "allow_single_factor": true,
+    "root": {
+      "kind": "leaf",
+      "factor_id": "pwd"
+    },
+    "enc_hex": "06050000006c6f67696e0000010101030000007077640104080000006172676f6e32696400000000",
+    "sha256_hex": "f9835773d1750320870c27cf6e7ef26579f7b3d7c58791b74c14bc317c0c4fc0"
+  },
+  {
+    "name": "ordered",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 2,
+    "root": {
+      "kind": "ordered",
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "pwd"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "totp"
+        }
+      ]
+    },
+    "enc_hex": "06050000006c6f67696e00000200060200000001030000007077640104080000006172676f6e326964000000000104000000746f74700205070000007266633632333800000000",
+    "sha256_hex": "ace9db75d4b7bbcc8337502f6e2618fa704ef5e6cdcb075bcc7d02b226af0ac6"
+  },
+  {
+    "name": "any_of",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 1,
+    "allow_single_factor": true,
+    "root": {
+      "kind": "any_of",
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "totp"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "webauthn"
+        }
+      ]
+    },
+    "enc_hex": "06050000006c6f67696e0000010104020000000104000000746f747002050700000072666336323338000000000108000000776562617574686e0201050000006669646f3200000000",
+    "sha256_hex": "b03c7c7ff8a64565f4257916b92844af104a88350ec3d3dd8ea5036848bbe5ba"
+  },
+  {
+    "name": "threshold_basic",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 2,
+    "root": {
+      "kind": "threshold",
+      "k": 2,
+      "distinct_categories": false,
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "pwd"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "totp"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "webauthn"
+        }
+      ]
+    },
+    "enc_hex": "06050000006c6f67696e000002000502000000000300000001030000007077640104080000006172676f6e326964000000000104000000746f747002050700000072666336323338000000000108000000776562617574686e0201050000006669646f3200000000",
+    "sha256_hex": "7f8950454db21bb90a070745eef6b82ff1232b5a9a7a2e59e7e98e80233bf112"
+  },
+  {
+    "name": "threshold_distinct",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 2,
+    "root": {
+      "kind": "threshold",
+      "k": 2,
+      "distinct_categories": true,
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "pwd"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "totp"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "face"
+        }
+      ]
+    },
+    "enc_hex": "06050000006c6f67696e000002000502000000010300000001030000007077640104080000006172676f6e326964000000000104000000746f7470020507000000726663363233380000000001040000006661636504010900000062696f6d657472696300000000",
+    "sha256_hex": "637bbdf447ee3cfe46c03d243fedc596408f16d298fd4d5b5b90df4f57ca7079"
+  },
+  {
+    "name": "batch_all_of",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 2,
+    "root": {
+      "kind": "batch_all_of",
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "pwd"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "totp"
+        }
+      ]
+    },
+    "enc_hex": "06050000006c6f67696e00000200030200000001030000007077640104080000006172676f6e326964000000000104000000746f74700205070000007266633632333800000000",
+    "sha256_hex": "514d09deb62b48272800ab17d164f26e0d06b66358b2cfaf6ff4adf1dfdd4cdc"
+  },
+  {
+    "name": "nested",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 2,
+    "root": {
+      "kind": "ordered",
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "pwd"
+        },
+        {
+          "kind": "any_of",
+          "nodes": [
+            {
+              "kind": "leaf",
+              "factor_id": "totp"
+            },
+            {
+              "kind": "leaf",
+              "factor_id": "webauthn"
+            }
+          ]
+        }
+      ]
+    },
+    "enc_hex": "06050000006c6f67696e00000200060200000001030000007077640104080000006172676f6e3269640000000004020000000104000000746f747002050700000072666336323338000000000108000000776562617574686e0201050000006669646f3200000000",
+    "sha256_hex": "98fc14f380e4acc8c8d3a531c16ef2f909973f9802cc0e4537be688c8bf2a7ac"
+  },
+  {
+    "name": "reads_ctx_from",
+    "action_scope": "login",
+    "outcome_class": "terminal",
+    "binding_mode": "bound",
+    "min_categories": 2,
+    "root": {
+      "kind": "ordered",
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "pwd"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "totp",
+          "reads_ctx_from": [
+            {
+              "factor_id": "pwd",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    "enc_hex": "06050000006c6f67696e00000200060200000001030000007077640104080000006172676f6e326964000000000104000000746f747002050700000072666336323338010000000300000070776401",
+    "sha256_hex": "3c65d65556d35135b2a861951c34847f9c4e54d5ff0297d5891a1aa4a6727686"
+  },
+  {
+    "name": "recovery_unbound",
+    "action_scope": "account_recovery",
+    "outcome_class": "terminal",
+    "binding_mode": "unbound",
+    "min_categories": 2,
+    "allow_unordered_all_of": true,
+    "root": {
+      "kind": "all_of",
+      "nodes": [
+        {
+          "kind": "leaf",
+          "factor_id": "rec"
+        },
+        {
+          "kind": "leaf",
+          "factor_id": "face"
+        }
+      ]
+    },
+    "enc_hex": "06100000006163636f756e745f7265636f766572790001020202020000000103000000726563020a0b0000007265636f766572792d76310000000001040000006661636504010900000062696f6d657472696300000000",
+    "sha256_hex": "987c5fa14e1d0bb08d68e5d1bafba453a39d3717c229aaa069b21b0fdd08489e"
+  }
+]

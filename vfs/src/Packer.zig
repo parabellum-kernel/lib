@@ -24,6 +24,8 @@ pub const ReadSpan = struct {
 
 pub const SmallFileInput = struct {
     parent_id: ?[]const u8 = null,
+    partition_id: []const u8 = "default",
+    share_scope: []const u8 = "private",
     name: []const u8,
     inode_id: []const u8,
     inode_ulid: [16]u8,
@@ -77,7 +79,21 @@ pub fn buildPacks(
     var cur_items = std.ArrayListUnmanaged(PackItem).empty;
     errdefer cur_items.deinit(allocator);
 
+    var cur_partition: []const u8 = inputs[0].partition_id;
+    var cur_scope: []const u8 = inputs[0].share_scope;
+
     for (inputs) |inp| {
+        const scope_changed = !std.mem.eql(u8, inp.partition_id, cur_partition) or
+            !std.mem.eql(u8, inp.share_scope, cur_scope);
+        if (scope_changed and cur_items.items.len > 0) {
+            try batches.append(allocator, .{
+                .blob = try cur_blob.toOwnedSlice(allocator),
+                .items = try cur_items.toOwnedSlice(allocator),
+            });
+            cur_partition = inp.partition_id;
+            cur_scope = inp.share_scope;
+        }
+
         var file_dek: [Crypto.KEY_LEN]u8 = undefined;
         io.random(&file_dek);
         const wrapped_dek = Crypto.wrapKeyWithNonce(io, vmk, file_dek, &inp.inode_ulid);

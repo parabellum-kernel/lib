@@ -93,6 +93,26 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    const crypto_mod = b.addModule("parabellum_crypto", .{
+        .root_source_file = b.path("crypto/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    vfs_mod.addImport("parabellum_crypto", crypto_mod);
+
+    const otp_mod = b.addModule("otp", .{
+        .root_source_file = b.path("otp/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    otp_mod.addImport("parabellum_crypto", crypto_mod);
+
+    const mfa_mod = b.addModule("parabellum_mfa", .{
+        .root_source_file = b.path("mfa/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mfa_mod.addImport("parabellum_crypto", crypto_mod);
 
     const test_step = b.step("test", "Run all parabellum-libs unit tests");
     const mods = [_]*std.Build.Module{
@@ -108,6 +128,9 @@ pub fn build(b: *std.Build) void {
         vfs_mod,
         yaml_mod,
         platform_mod,
+        crypto_mod,
+        otp_mod,
+        mfa_mod,
     };
     for (mods) |m| {
         const t = b.addTest(.{ .root_module = m });

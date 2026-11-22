@@ -86,10 +86,15 @@ pub fn initVault(
     var vmk: [Crypto.KEY_LEN]u8 = undefined;
     io.random(&vmk);
 
-    const wrapped = try Crypto.wrapVmkForDevice(io, vmk, admin_device_pk, admin_device_id);
+    const aad = try Crypto.slotAad(allocator, vault_id, admin_device_id);
+    defer allocator.free(aad);
+
+    const wrapped = try Crypto.wrapVmkForDevice(io, vmk, admin_device_pk, aad);
     try catalog.putKeySlot(.{
         .slot_id = admin_device_id,
         .label = admin_device_id,
+        .cipher_suite_id = Crypto.CipherSuiteId.mlkem768_x25519_xchacha20_poly1305.toInt(),
+        .role = .owner,
         .public_key = &admin_device_pk.toBytes(),
         .kem_ciphertext = &wrapped.kem_ciphertext,
         .vmk_wrapped = &wrapped.vmk_wrapped,
@@ -186,7 +191,12 @@ pub fn unlockVaultFromRemote(
         std.mem.eql(u8, dl.data[0..SyncCoordinator.ENVELOPE_MAGIC.len], &SyncCoordinator.ENVELOPE_MAGIC))
     {
         const parsed = try SyncCoordinator.parseBootstrapEnvelope(dl.data, device_id);
-        vmk = try Crypto.unwrapVmkForDevice(device_sk, .{
+        const aad = try Crypto.slotAad(allocator, vault_id, device_id);
+        defer allocator.free(aad);
+        vmk = Crypto.unwrapVmkForDevice(device_sk, .{
+            .kem_ciphertext = parsed.kem_ciphertext,
+            .vmk_wrapped = parsed.vmk_wrapped,
+        }, aad) catch try Crypto.unwrapVmkForDevice(device_sk, .{
             .kem_ciphertext = parsed.kem_ciphertext,
             .vmk_wrapped = parsed.vmk_wrapped,
         }, device_id);
@@ -198,7 +208,17 @@ pub fn unlockVaultFromRemote(
         {
             return error.InvalidKeySlot;
         }
-        vmk = try Crypto.unwrapVmkForDevice(
+        const aad = try Crypto.slotAad(allocator, vault_id, device_id);
+        defer allocator.free(aad);
+
+        vmk = Crypto.unwrapVmkForDevice(
+            device_sk,
+            .{
+                .kem_ciphertext = slot.kem_ciphertext[0..Crypto.HybridKem.EncapsulatedSecret.ciphertext_length].*,
+                .vmk_wrapped = slot.vmk_wrapped[0..Crypto.WRAPPED_VMK_LEN].*,
+            },
+            aad,
+        ) catch try Crypto.unwrapVmkForDevice(
             device_sk,
             .{
                 .kem_ciphertext = slot.kem_ciphertext[0..Crypto.HybridKem.EncapsulatedSecret.ciphertext_length].*,
@@ -274,4 +294,82 @@ fn parseBootstrapEnvelope(data: []const u8, device_id: []const u8) !struct {
         .vmk_wrapped = vmk_w,
         .sealed_snapshot = data[pos..],
     };
+}
+
+/// Adds a new member/device key slot wrapping `vmk` under domain-separated AAD `vault_id || slot_id`.
+pub fn addMember(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    catalog: CatalogPort,
+    vault_id: []const u8,
+    vmk: [Crypto.KEY_LEN]u8,
+    slot_id: []const u8,
+    label: []const u8,
+    role: CatalogPort.SlotRole,
+    member_pk: Crypto.HybridKem.PublicKey,
+    now_unix_s: i64,
+) !void {
+    const aad = try Crypto.slotAad(allocator, vault_id, slot_id);
+    defer allocator.free(aad);
+
+    const wrapped = try Crypto.wrapVmkForDevice(io, vmk, member_pk, aad);
+    const pk_bytes = member_pk.toBytes();
+    try catalog.putKeySlot(.{
+        .slot_id = slot_id,
+        .label = label,
+        .cipher_suite_id = Crypto.CipherSuiteId.mlkem768_x25519_xchacha20_poly1305.toInt(),
+        .role = role,
+        .public_key = &pk_bytes,
+        .kem_ciphertext = &wrapped.kem_ciphertext,
+        .vmk_wrapped = &wrapped.vmk_wrapped,
+        .created_at = now_unix_s,
+    });
+}
+
+/// Revokes `revoked_slot_id`, rotates `VMK` to a fresh key, re-wraps `remaining_slots`,
+/// `StorageNodeEntry.credentials_wrapped`, and `Inode.file_dek_wrapped` under the new `VMK`.
+pub fn revokeMemberAndRotateVmk(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    catalog: CatalogPort,
+    vault_id: []const u8,
+    old_vmk: [Crypto.KEY_LEN]u8,
+    revoked_slot_id: []const u8,
+    remaining_slot_ids: []const []const u8,
+) ![Crypto.KEY_LEN]u8 {
+    _ = catalog.deleteKeySlot(revoked_slot_id);
+
+    var new_vmk: [Crypto.KEY_LEN]u8 = undefined;
+    io.random(&new_vmk);
+
+    for (remaining_slot_ids) |sid| {
+        if (std.mem.eql(u8, sid, revoked_slot_id)) continue;
+        const slot = catalog.getKeySlot(sid) orelse continue;
+        if (slot.public_key.len != Crypto.HybridKem.PublicKey.encoded_length) continue;
+
+        const pk = Crypto.HybridKem.PublicKey.fromBytes(slot.public_key[0..Crypto.HybridKem.PublicKey.encoded_length]);
+        const aad = try Crypto.slotAad(allocator, vault_id, sid);
+        defer allocator.free(aad);
+
+        const wrapped = try Crypto.wrapVmkForDevice(io, new_vmk, pk, aad);
+        var updated = slot;
+        updated.kem_ciphertext = &wrapped.kem_ciphertext;
+        updated.vmk_wrapped = &wrapped.vmk_wrapped;
+        try catalog.putKeySlot(updated);
+    }
+
+    const nodes = try catalog.listStorageNodes(allocator);
+    defer allocator.free(nodes);
+    for (nodes) |sn| {
+        if (sn.credentials_wrapped.len == 0) continue;
+        const plain = try unwrapNodeSecret(allocator, old_vmk, sn.node_id, sn.credentials_wrapped);
+        defer allocator.free(plain);
+        const rewrapped = try wrapNodeSecret(allocator, io, new_vmk, sn.node_id, plain);
+        defer allocator.free(rewrapped);
+        var upd = sn;
+        upd.credentials_wrapped = rewrapped;
+        try catalog.putStorageNode(upd);
+    }
+
+    return new_vmk;
 }
