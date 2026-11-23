@@ -1,6 +1,7 @@
 pub const IrCodecConfigRow = struct {
     config_id: i64,
     track_id: i64,
+    track_kind: []const u8 = "video",
     codec_tag: []const u8,
     container_width: i64,
     container_height: i64,
