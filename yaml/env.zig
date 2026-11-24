@@ -250,3 +250,158 @@ pub fn loadDotEnvForPipeline(alloc: Allocator, pipeline_path: []const u8) void {
     }
 }
 
+pub const DotEnvEntry = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
+/// Parses `.env` content into key/value slices referencing `content` without mutating process env.
+pub fn parseDotEnvEntries(alloc: Allocator, content: []const u8) ![]DotEnvEntry {
+    var list: std.ArrayListUnmanaged(DotEnvEntry) = .empty;
+    errdefer list.deinit(alloc);
+
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+
+        const body = if (std.mem.startsWith(u8, line, "export ") or std.mem.startsWith(u8, line, "export\t"))
+            std.mem.trimStart(u8, line["export".len..], " \t")
+        else
+            line;
+
+        const eq_idx = std.mem.indexOfScalar(u8, body, '=') orelse continue;
+        const key = std.mem.trim(u8, body[0..eq_idx], " \t");
+        if (key.len == 0) continue;
+
+        var val = std.mem.trim(u8, body[eq_idx + 1 ..], " \t");
+        if (val.len >= 2 and ((val[0] == '"' and val[val.len - 1] == '"') or (val[0] == '\'' and val[val.len - 1] == '\''))) {
+            val = val[1 .. val.len - 1];
+        } else if (std.mem.indexOfScalar(u8, val, '#')) |hash_idx| {
+            if (hash_idx > 0 and (val[hash_idx - 1] == ' ' or val[hash_idx - 1] == '\t')) {
+                val = std.mem.trimEnd(u8, val[0..hash_idx], " \t");
+            }
+        }
+
+        try list.append(alloc, .{ .key = key, .value = val });
+    }
+
+    return list.toOwnedSlice(alloc);
+}
+
+/// Parses `.env` content with interpolation and tilde expansion, applying unset entries to process env.
+pub fn applyDotEnvContent(alloc: Allocator, content: []const u8) !usize {
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var env = EnvInterpolator.init(true);
+    try env.parseDotEnv(arena, content);
+    return env.vars.count();
+}
+
+fn matchDotEnvLineKey(raw_line: []const u8) ?[]const u8 {
+    const line = std.mem.trim(u8, raw_line, " \t\r");
+    if (line.len == 0 or line[0] == '#') return null;
+
+    const body = if (std.mem.startsWith(u8, line, "export ") or std.mem.startsWith(u8, line, "export\t"))
+        std.mem.trimStart(u8, line["export".len..], " \t")
+    else
+        line;
+
+    const eq_idx = std.mem.indexOfScalar(u8, body, '=') orelse return null;
+    const key = std.mem.trim(u8, body[0..eq_idx], " \t");
+    if (key.len == 0) return null;
+    return key;
+}
+
+fn formatDotEnvValue(alloc: Allocator, value: []const u8) ![]u8 {
+    const needs_quotes = for (value) |c| {
+        if (c == ' ' or c == '\t' or c == '#' or c == '\n' or c == '\r') break true;
+    } else false;
+    if (!needs_quotes) return alloc.dupe(u8, value);
+    return std.fmt.allocPrint(alloc, "\"{s}\"", .{value});
+}
+
+/// Returns updated `.env` content with `entries` set or updated, preserving unrelated lines and comments.
+pub fn setDotEnvEntriesInContent(alloc: Allocator, existing: []const u8, entries: []const DotEnvEntry) ![]u8 {
+    const seen = try alloc.alloc(bool, entries.len);
+    defer alloc.free(seen);
+    @memset(seen, false);
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+
+    if (existing.len > 0) {
+        var lines = std.mem.splitScalar(u8, existing, '\n');
+        var first = true;
+        while (lines.next()) |raw_line| {
+            const clean_line = std.mem.trimEnd(u8, raw_line, "\r");
+            if (!first and lines.peek() == null and clean_line.len == 0) break;
+            first = false;
+
+            if (matchDotEnvLineKey(clean_line)) |line_key| {
+                var replaced = false;
+                for (entries, 0..) |entry, idx| {
+                    if (std.mem.eql(u8, line_key, entry.key)) {
+                        const fmt_val = try formatDotEnvValue(alloc, entry.value);
+                        defer alloc.free(fmt_val);
+                        try out.print(alloc, "{s}={s}\n", .{ entry.key, fmt_val });
+                        seen[idx] = true;
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (replaced) continue;
+            }
+            try out.print(alloc, "{s}\n", .{clean_line});
+        }
+    }
+
+    for (entries, 0..) |entry, idx| {
+        if (!seen[idx]) {
+            const fmt_val = try formatDotEnvValue(alloc, entry.value);
+            defer alloc.free(fmt_val);
+            try out.print(alloc, "{s}={s}\n", .{ entry.key, fmt_val });
+        }
+    }
+
+    return out.toOwnedSlice(alloc);
+}
+
+/// Returns updated `.env` content with `keys` removed, preserving unrelated lines and comments.
+pub fn unsetDotEnvKeysInContent(
+    alloc: Allocator,
+    existing: []const u8,
+    keys: []const []const u8,
+) !struct { content: []u8, removed: usize } {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+
+    var removed: usize = 0;
+    var lines = std.mem.splitScalar(u8, existing, '\n');
+    var first = true;
+    while (lines.next()) |raw_line| {
+        const clean_line = std.mem.trimEnd(u8, raw_line, "\r");
+        if (!first and lines.peek() == null and clean_line.len == 0) break;
+        first = false;
+
+        if (matchDotEnvLineKey(clean_line)) |line_key| {
+            var should_remove = false;
+            for (keys) |k| {
+                if (std.mem.eql(u8, line_key, k)) {
+                    should_remove = true;
+                    break;
+                }
+            }
+            if (should_remove) {
+                removed += 1;
+                continue;
+            }
+        }
+        try out.print(alloc, "{s}\n", .{clean_line});
+    }
+
+    return .{ .content = try out.toOwnedSlice(alloc), .removed = removed };
+}
+
