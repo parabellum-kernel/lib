@@ -22,9 +22,61 @@ pub const CueRecord = types.CueRecord;
 pub const LacingAnomaly = types.LacingAnomaly;
 pub const MkvDissectionResult = types.MkvDissectionResult;
 
+const BufferedByteSource = struct {
+    inner: ByteSource,
+    buf: [4096]u8 = undefined,
+    buf_start: u64 = 0,
+    buf_len: usize = 0,
+
+    fn asByteSource(self: *BufferedByteSource) ByteSource {
+        return .{
+            .ctx = self,
+            .read_at_fn = readAt,
+            .file_size = self.inner.file_size,
+        };
+    }
+
+    fn readAt(ctx_ptr: *const anyopaque, dst: []u8, offset: u64) anyerror!usize {
+        const self: *BufferedByteSource = @constCast(@ptrCast(@alignCast(ctx_ptr)));
+        if (dst.len == 0 or offset >= self.inner.file_size) return 0;
+
+        const avail = self.inner.file_size - offset;
+        const want = @min(dst.len, avail);
+
+        if (offset >= self.buf_start and offset < self.buf_start + self.buf_len) {
+            const in_off: usize = @intCast(offset - self.buf_start);
+            const in_avail = self.buf_len - in_off;
+            if (want <= in_avail) {
+                @memcpy(dst[0..want], self.buf[in_off..][0..want]);
+                return want;
+            }
+        }
+
+        if (want <= self.buf.len) {
+            const to_read = @min(self.buf.len, avail);
+            const got = try self.inner.readAt(self.buf[0..to_read], offset);
+            self.buf_start = offset;
+            self.buf_len = got;
+            const n = @min(want, got);
+            @memcpy(dst[0..n], self.buf[0..n]);
+            return n;
+        }
+
+        return try self.inner.readAt(dst[0..want], offset);
+    }
+};
+
 /// Pure structural dissector for Matroska / WebM (`Segment`, `Info`, `Tracks`, `Attachments`, `Clusters`).
 pub const MkvDissector = struct {
     allocator: Allocator,
+
+    pub const DissectOptions = struct {
+        parse_info: bool = true,
+        parse_tracks: bool = true,
+        parse_attachments: bool = true,
+        parse_cues: bool = true,
+        parse_cluster_blocks: bool = true,
+    };
 
     pub fn init(allocator: Allocator) MkvDissector {
         return .{ .allocator = allocator };
@@ -35,6 +87,17 @@ pub const MkvDissector = struct {
         source: ByteSource,
         elements: []const DissectedElement,
     ) !MkvDissectionResult {
+        return self.dissectWithOptions(source, elements, .{});
+    }
+
+    pub fn dissectWithOptions(
+        self: MkvDissector,
+        raw_source: ByteSource,
+        elements: []const DissectedElement,
+        options: DissectOptions,
+    ) !MkvDissectionResult {
+        var buffered = BufferedByteSource{ .inner = raw_source };
+        const source = buffered.asByteSource();
         var tracks = std.ArrayList(MkvTrackRecord).empty;
         errdefer tracks.deinit(self.allocator);
 
@@ -76,14 +139,22 @@ pub const MkvDissector = struct {
             } else if (elem.id == ebml.types.ID_EBML_MAX_SIZE_LENGTH) {
                 header_ebml_max_size_length = try field_reader.readUint(source, elem.header.payloadOffset(), elem.payloadSize());
             } else if (elem.id == ebml.types.ID_INFO) {
-                info = try self.parseInfo(source, elements, idx, &external_refs);
+                if (options.parse_info) {
+                    info = try self.parseInfo(source, elements, idx, &external_refs);
+                }
             } else if (elem.id == ebml.types.ID_TRACKS) {
                 has_tracks_element = true;
-                try self.parseTracks(source, elements, idx, &tracks);
+                if (options.parse_tracks) {
+                    try self.parseTracks(source, elements, idx, &tracks);
+                }
             } else if (elem.id == ebml.types.ID_ATTACHMENTS) {
-                try self.parseAttachments(source, elements, idx, &attachments);
+                if (options.parse_attachments) {
+                    try self.parseAttachments(source, elements, idx, &attachments);
+                }
             } else if (elem.id == ebml.types.ID_CUES) {
-                try self.parseCues(source, elements, idx, segment_payload_start, segment_end, &cues);
+                if (options.parse_cues) {
+                    try self.parseCues(source, elements, idx, segment_payload_start, segment_end, &cues);
+                }
             } else if (elem.id == ebml.types.ID_CLUSTER) {
                 const span = ClusterSpan{
                     .cluster_index = cluster_count,
@@ -95,7 +166,9 @@ pub const MkvDissector = struct {
                 try clusters.append(self.allocator, span);
                 cluster_count += 1;
                 total_cluster_bytes += elem.containment.available_bytes;
-                try self.dissectClusterBlocks(source, span, &sample_runs, &lacing_anomalies);
+                if (options.parse_cluster_blocks) {
+                    try self.dissectClusterBlocks(source, span, &sample_runs, &lacing_anomalies);
+                }
             }
         }
 
@@ -171,8 +244,9 @@ pub const MkvDissector = struct {
         segment_end: u64,
         out_cues: *std.ArrayList(CueRecord),
     ) !void {
-        for (elements, 0..) |cp_elem, cp_idx| {
-            if (cp_idx <= cues_idx) continue;
+        const cues_depth = elements[cues_idx].depth;
+        for (elements[cues_idx + 1 ..], cues_idx + 1..) |cp_elem, cp_idx| {
+            if (cp_elem.depth <= cues_depth) break;
             if (cp_elem.parent_id != @as(u32, @intCast(cues_idx))) continue;
             if (cp_elem.id != ebml.types.ID_CUE_POINT) continue;
 
@@ -181,14 +255,16 @@ pub const MkvDissector = struct {
             var cluster_pos: u64 = 0;
             var has_pos = false;
 
-            for (elements, 0..) |sub, sub_idx| {
-                if (sub_idx <= cp_idx) continue;
+            const cp_depth = cp_elem.depth;
+            for (elements[cp_idx + 1 ..], cp_idx + 1..) |sub, sub_idx| {
+                if (sub.depth <= cp_depth) break;
                 if (sub.parent_id == @as(u32, @intCast(cp_idx))) {
                     if (sub.id == ebml.types.ID_CUE_TIME) {
                         cue_time = try field_reader.readUint(source, sub.header.payloadOffset(), sub.payloadSize());
                     } else if (sub.id == ebml.types.ID_CUE_TRACK_POSITIONS) {
-                        for (elements, 0..) |tp, tp_idx| {
-                            if (tp_idx <= sub_idx) continue;
+                        const tp_parent_depth = sub.depth;
+                        for (elements[sub_idx + 1 ..]) |tp| {
+                            if (tp.depth <= tp_parent_depth) break;
                             if (tp.parent_id != @as(u32, @intCast(sub_idx))) continue;
                             if (tp.id == ebml.types.ID_CUE_TRACK) {
                                 track_num = try field_reader.readUint(source, tp.header.payloadOffset(), tp.payloadSize());

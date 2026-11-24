@@ -52,41 +52,84 @@ pub fn detectInconsistencies(
         }
     }
 
-    for (sample_runs) |sr| {
-        if (sr.end_offset > file_size) {
-            try facts.append(allocator, .{
-                .kind = .sample_eof_overflow,
-                .track_id = sr.track_id,
-                .run_id = sr.run_id,
-                .file_offset = sr.start_offset,
-                .byte_length = sr.byte_length,
-                .expected_a = file_size,
-                .measured_a = sr.end_offset,
-            });
-            continue;
-        }
+    if (sample_runs.len > 0) {
+        const Interval = struct { start: u64, end: u64 };
+        var media_intervals: std.ArrayList(Interval) = .empty;
+        defer media_intervals.deinit(allocator);
+        var media_data_bytes: u64 = 0;
 
-        var inside_media_data = false;
         for (regions) |reg| {
-            if (!std.mem.eql(u8, reg.role, "media_data")) continue;
-            if (sr.start_offset >= reg.payload_offset and sr.end_offset <= reg.effective_end_offset) {
-                inside_media_data = true;
-                break;
+            if (std.mem.eql(u8, reg.role, "media_data")) {
+                media_data_bytes +|= reg.effective_end_offset -| reg.payload_offset;
+                if (reg.effective_end_offset > reg.payload_offset) {
+                    try media_intervals.append(allocator, .{
+                        .start = reg.payload_offset,
+                        .end = reg.effective_end_offset,
+                    });
+                }
             }
         }
-        if (!inside_media_data) {
-            try facts.append(allocator, .{
-                .kind = .sample_outside_media_data,
-                .track_id = sr.track_id,
-                .run_id = sr.run_id,
-                .file_offset = sr.start_offset,
-                .byte_length = sr.byte_length,
-            });
-        }
-    }
 
-    // R10: Sweep-line sample run overlap & read amplification ratio
-    if (sample_runs.len > 0) {
+        std.mem.sort(Interval, media_intervals.items, {}, struct {
+            fn lessThan(_: void, a: Interval, b: Interval) bool {
+                if (a.start != b.start) return a.start < b.start;
+                return a.end < b.end;
+            }
+        }.lessThan);
+
+        // Merge overlapping/adjacent media_data intervals for O(log R) containment lookup.
+        var merged_len: usize = 0;
+        for (media_intervals.items) |iv| {
+            if (merged_len == 0 or iv.start > media_intervals.items[merged_len - 1].end) {
+                media_intervals.items[merged_len] = iv;
+                merged_len += 1;
+            } else if (iv.end > media_intervals.items[merged_len - 1].end) {
+                media_intervals.items[merged_len - 1].end = iv.end;
+            }
+        }
+        const merged = media_intervals.items[0..merged_len];
+
+        for (sample_runs) |sr| {
+            if (sr.end_offset > file_size) {
+                try facts.append(allocator, .{
+                    .kind = .sample_eof_overflow,
+                    .track_id = sr.track_id,
+                    .run_id = sr.run_id,
+                    .file_offset = sr.start_offset,
+                    .byte_length = sr.byte_length,
+                    .expected_a = file_size,
+                    .measured_a = sr.end_offset,
+                });
+                continue;
+            }
+
+            // Binary search for the last interval with start <= sr.start_offset.
+            var inside_media_data = false;
+            var lo: usize = 0;
+            var hi: usize = merged.len;
+            while (lo < hi) {
+                const mid = lo + (hi - lo) / 2;
+                if (merged[mid].start <= sr.start_offset) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            if (lo > 0 and sr.end_offset <= merged[lo - 1].end) {
+                inside_media_data = true;
+            }
+            if (!inside_media_data) {
+                try facts.append(allocator, .{
+                    .kind = .sample_outside_media_data,
+                    .track_id = sr.track_id,
+                    .run_id = sr.run_id,
+                    .file_offset = sr.start_offset,
+                    .byte_length = sr.byte_length,
+                });
+            }
+        }
+
+        // R10: Sweep-line sample run overlap & read amplification ratio
         const sorted = try allocator.dupe(ir.IrSampleRunRow, sample_runs);
         defer allocator.free(sorted);
         std.mem.sort(ir.IrSampleRunRow, sorted, {}, struct {
@@ -115,12 +158,6 @@ pub fn detectInconsistencies(
             if (sr.end_offset > max_end) max_end = sr.end_offset;
         }
 
-        var media_data_bytes: u64 = 0;
-        for (regions) |reg| {
-            if (std.mem.eql(u8, reg.role, "media_data")) {
-                media_data_bytes +|= reg.effective_end_offset -| reg.payload_offset;
-            }
-        }
         if (media_data_bytes > 0 and total_sample_bytes > media_data_bytes) {
             try facts.append(allocator, .{
                 .kind = .decompression_amplification,
