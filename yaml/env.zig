@@ -5,6 +5,16 @@ const yaml = @import("ast.zig");
 const c_stdlib = struct {
     extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 };
+const c_stdio = struct {
+    const FILE = opaque {};
+    extern "c" fn fopen(path: [*:0]const u8, mode: [*:0]const u8) ?*FILE;
+    extern "c" fn fclose(stream: *FILE) c_int;
+    extern "c" fn fseek(stream: *FILE, offset: c_long, whence: c_int) c_int;
+    extern "c" fn ftell(stream: *FILE) c_long;
+    extern "c" fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *FILE) usize;
+    const SEEK_SET: c_int = 0;
+    const SEEK_END: c_int = 2;
+};
 
 pub const EnvError = error{
     MissingRequiredEnvVar,
@@ -85,7 +95,9 @@ pub const EnvInterpolator = struct {
             const owned_key_z = try arena.dupeSentinel(u8, key, 0);
             const owned_val_z = try arena.dupeSentinel(u8, resolved_val, 0);
             try self.vars.put(arena, owned_key_z, owned_val_z);
-            _ = c_stdlib.setenv(owned_key_z.ptr, owned_val_z.ptr, 0);
+            if (self.use_process_env) {
+                _ = c_stdlib.setenv(owned_key_z.ptr, owned_val_z.ptr, 0);
+            }
         }
     }
 
@@ -98,6 +110,16 @@ pub const EnvInterpolator = struct {
     }
 
     fn getProcessEnv(key: []const u8) ?[]const u8 {
+        if (@import("builtin").link_libc) {
+            var buf: [256]u8 = undefined;
+            if (key.len < buf.len) {
+                @memcpy(buf[0..key.len], key);
+                buf[key.len] = 0;
+                if (std.c.getenv(@ptrCast(&buf[0]))) |c_str| {
+                    return std.mem.span(c_str);
+                }
+            }
+        }
         if (@hasDecl(std.os, "environ")) {
             for (std.os.environ) |entry_ptr| {
                 const entry = std.mem.span(entry_ptr);
@@ -111,9 +133,25 @@ pub const EnvInterpolator = struct {
         return null;
     }
 
+    fn expandTilde(self: *const EnvInterpolator, arena: Allocator, val: []const u8) Allocator.Error![]const u8 {
+        if (std.mem.eql(u8, val, "~")) {
+            if (self.get("HOME")) |home| {
+                if (home.len > 0) return arena.dupe(u8, home);
+            }
+        } else if (std.mem.startsWith(u8, val, "~/")) {
+            if (self.get("HOME")) |home| {
+                if (home.len > 0) {
+                    const clean_home = std.mem.trimEnd(u8, home, "/");
+                    return std.fmt.allocPrint(arena, "{s}/{s}", .{ clean_home, val[2..] });
+                }
+            }
+        }
+        return val;
+    }
+
     pub fn interpolate(self: *const EnvInterpolator, arena: Allocator, raw: []const u8) EnvError![]const u8 {
         if (std.mem.indexOf(u8, raw, "${") == null) {
-            return raw;
+            return try self.expandTilde(arena, raw);
         }
 
         var out: std.ArrayListUnmanaged(u8) = .empty;
@@ -165,7 +203,50 @@ pub const EnvInterpolator = struct {
             }
         }
 
-        return out.toOwnedSlice(arena);
+        const result = try out.toOwnedSlice(arena);
+        return try self.expandTilde(arena, result);
     }
 };
+
+fn readFileAllocC(alloc: Allocator, path: []const u8) ![]u8 {
+    const path_z = try alloc.allocSentinel(u8, path.len, 0);
+    @memcpy(path_z, path);
+    defer alloc.free(path_z);
+
+    const fp = c_stdio.fopen(path_z.ptr, "rb") orelse return error.FileNotFound;
+    defer _ = c_stdio.fclose(fp);
+
+    _ = c_stdio.fseek(fp, 0, c_stdio.SEEK_END);
+    const sz_long = c_stdio.ftell(fp);
+    if (sz_long < 0) return error.FileReadFailed;
+    const sz: usize = @intCast(sz_long);
+    _ = c_stdio.fseek(fp, 0, c_stdio.SEEK_SET);
+
+    const buf = try alloc.alloc(u8, sz);
+    errdefer alloc.free(buf);
+    if (sz > 0) {
+        const read_n = c_stdio.fread(buf.ptr, 1, sz, fp);
+        if (read_n != sz) return error.FileReadFailed;
+    }
+    return buf;
+}
+
+/// Load `.env` from CWD, `configs/.env`, or `<dirname(pipeline_path)>/.env` into process env.
+pub fn loadDotEnvForPipeline(alloc: Allocator, pipeline_path: []const u8) void {
+    var env = EnvInterpolator.init(true);
+    defer env.deinit(alloc);
+
+    const pipe_dir = std.fs.path.dirname(pipeline_path) orelse ".";
+    const pipe_env = std.fs.path.join(alloc, &.{ pipe_dir, ".env" }) catch return;
+    const env_candidates = [_][]const u8{
+        ".env",
+        "configs/.env",
+        pipe_env,
+    };
+    for (env_candidates) |ep| {
+        const bytes = readFileAllocC(alloc, ep) catch continue;
+        env.parseDotEnv(alloc, bytes) catch {};
+        break;
+    }
+}
 
