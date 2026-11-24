@@ -231,11 +231,17 @@ fn readFileAllocC(alloc: Allocator, path: []const u8) ![]u8 {
     return buf;
 }
 
-/// Load `.env` from CWD, `configs/.env`, or `<dirname(pipeline_path)>/.env` into process env.
-pub fn loadDotEnvForPipeline(alloc: Allocator, pipeline_path: []const u8) void {
+/// Load a specific `.env` file into process env. Returns true if the file was found and parsed.
+pub fn loadDotEnvFile(alloc: Allocator, path: []const u8) bool {
+    const bytes = readFileAllocC(alloc, path) catch return false;
     var env = EnvInterpolator.init(true);
     defer env.deinit(alloc);
+    env.parseDotEnv(alloc, bytes) catch {};
+    return true;
+}
 
+/// Load `.env` from CWD, `configs/.env`, or `<dirname(pipeline_path)>/.env` into process env.
+pub fn loadDotEnvForPipeline(alloc: Allocator, pipeline_path: []const u8) void {
     const pipe_dir = std.fs.path.dirname(pipeline_path) orelse ".";
     const pipe_env = std.fs.path.join(alloc, &.{ pipe_dir, ".env" }) catch return;
     const env_candidates = [_][]const u8{
@@ -244,9 +250,7 @@ pub fn loadDotEnvForPipeline(alloc: Allocator, pipeline_path: []const u8) void {
         pipe_env,
     };
     for (env_candidates) |ep| {
-        const bytes = readFileAllocC(alloc, ep) catch continue;
-        env.parseDotEnv(alloc, bytes) catch {};
-        break;
+        if (loadDotEnvFile(alloc, ep)) break;
     }
 }
 

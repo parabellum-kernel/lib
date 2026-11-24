@@ -1,5 +1,6 @@
 pub const fs = @import("fs.zig");
 pub const env = @import("env.zig");
+pub const app_paths = @import("app_paths.zig");
 pub const io = @import("io.zig");
 pub const process = @import("process.zig");
 pub const random_access = @import("random_access.zig");
